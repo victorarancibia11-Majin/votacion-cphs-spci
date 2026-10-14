@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Panel Comité Paritario SPCI</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<div class="wrap wide no-print">
+  <header>
+    <span class="eyebrow">Comisión electoral · SPCI</span>
+    <h1>Panel de votación</h1>
+    <p class="lead">Sigue la participación y los resultados de cada turno, y cierra la votación cuando termine.</p>
+  </header>
+
+  <div id="msg" class="notice err" hidden></div>
+
+  <form id="login" class="card" autocomplete="off">
+    <h2>Ingresar</h2>
+    <input id="clave" type="password" placeholder="Clave de administración" required>
+    <button class="primary" type="submit">Entrar</button>
+  </form>
+
+  <div id="panel" hidden>
+    <div class="row" style="margin-bottom:16px">
+      <button id="refrescar" type="button">Actualizar</button>
+      <span class="muted" id="hora"></span>
+    </div>
+    <div id="turnos" class="grid2"></div>
+  </div>
+</div>
+
+
+<script>
+const $=id=>document.getElementById(id);
+let clave=null;
+try{clave=sessionStorage.getItem("clave")}catch{}
+
+async function api(body){
+  const r=await fetch("/api/admin",{method:"POST",headers:{"content-type":"application/json","x-admin-key":clave||""},body:JSON.stringify(body)});
+  const d=await r.json().catch(()=>({error:"Respuesta inválida del servidor."}));
+  if(!r.ok){if(r.status===401){clave=null;try{sessionStorage.removeItem("clave")}catch{};mostrarLogin()}throw new Error(d.error||"Error inesperado.")}
+  return d;
+}
+function error(t){const m=$("msg");m.textContent=t;m.hidden=!t}
+function mostrarLogin(){$("login").hidden=false;$("panel").hidden=true}
+const el=(tag,cls,txt)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e};
+
+$("login").addEventListener("submit",async e=>{
+  e.preventDefault();clave=$("clave").value;
+  try{sessionStorage.setItem("clave",clave)}catch{}
+  cargar();
+});
+$("refrescar").addEventListener("click",cargar);
+
+async function cargar(){
+  error("");
+  try{
+    const d=await api({accion:"estado"});
+    $("login").hidden=true;$("panel").hidden=false;
+    $("hora").textContent="Actualizado a las "+new Date().toLocaleTimeString("es-CL");
+    const cont=$("turnos");cont.textContent="";
+    d.turnos.forEach(t=>cont.append(tarjeta(t)));
+  }catch(err){error(err.message)}
+}
+
+function tarjeta(t){
+  const c=el("section","card");
+  const head=el("div","row");
+  head.append(el("h2",null,t.nombre),el("span","pill "+(t.abierta?"open":"closed"),t.abierta?"Abierta":"Cerrada"));
+  c.append(head);
+
+  const st=el("div","stat",String(t.votosEmitidos));
+  st.append(el("small",null,"votos de "+t.votantes+" personas del turno"));
+  c.append(st);
+
+  // Acciones
+  const acc=el("div","row");
+  const bAlt=el("button",null,t.abierta?"Cerrar votación":"Reabrir votación");
+  bAlt.onclick=async()=>{bAlt.disabled=true;try{await api({accion:"alternar",turno:t.turno});cargar()}catch(e){error(e.message)}};
+  const bReset=el("button",null,"Reiniciar turno");
+  acc.append(bAlt,bReset);
+  c.append(acc);
+
+  const conf=el("div","confirm");conf.hidden=true;
+  conf.append(el("span",null,"Se borrarán todos los votos de "+t.nombre+". No se puede deshacer."));
+  const cr=el("div","row");const si=el("button","primary","Sí, borrar todo");const no=el("button",null,"Cancelar");
+  si.onclick=async()=>{si.disabled=true;try{await api({accion:"reiniciar",turno:t.turno});cargar()}catch(e){error(e.message)}};
+  no.onclick=()=>conf.hidden=true;bReset.onclick=()=>conf.hidden=false;
+  cr.append(si,no);conf.append(cr);c.append(conf);
+
+  // Resultados
+  c.append(el("h2",null,"Resultados"));
+  c.append(el("p","muted","Se elige 1 representante por turno: el más votado. Si hay empate en el primer lugar, la comisión debe resolverlo."));
+  const res=el("div","results");
+  const max=Math.max(1,t.blancos,...t.resultados.map(r=>r.votos));
+  if(!t.resultados.length&&!t.blancos)res.append(el("p","muted","Aún no hay votos."));
+  const top=t.resultados.length?t.resultados[0].votos:0,empate=t.resultados.filter(r=>r.votos===top).length>1;
+  t.resultados.forEach((r,i)=>res.append(fila(i+1,r.nombre,r.votos,max,r.votos===top?(empate?"Empate":"Electo"):null,r.votos!==top)));
+  if(t.blancos)res.append(fila("–","Votos en blanco",t.blancos,max,null,true));
+  c.append(res);
+  return c;
+}
+
+function fila(pos,nombre,v,max,tag,dim){
+  const r=el("div","res"+(dim?" dim":""));
+  const n=el("span",null,nombre);
+  if(tag)n.append(el("span","tag"+(tag==="Empate"?" sup":""),tag));
+  const tr=el("div","track");const f=el("div","fill");f.style.width=(v/max*100)+"%";tr.append(f);
+  r.append(el("span","pos",String(pos)),n,el("b",null,String(v)),tr);
+  return r;
+}
+
+
+if(clave)cargar();else mostrarLogin();
+</script>
+</body>
+</html>

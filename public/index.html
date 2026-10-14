@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Votación CPHS SPCI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="estilos.css">
+<style>
+.turnos{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.turno-btn{display:grid;gap:4px;padding:20px 16px;text-align:left;border-radius:10px}
+.turno-btn b{font-family:var(--display);font-size:30px;line-height:1}
+.turno-btn span{font-weight:400;color:var(--muted);font-size:13px}
+.turno-btn:disabled span::after{content:" · cerrada"}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="eyebrow">SPCI · Contrato N°4600027648 · División Andina</span>
+    <h1 id="titulo">Elección de representante al Comité Paritario</h1>
+    <p class="lead">Se elige 1 representante por turno. El voto es secreto: no se guarda tu nombre ni nada que te identifique.</p>
+  </header>
+
+  <div id="msg" class="notice err" hidden></div>
+  <p id="cargando" class="muted">Cargando…</p>
+
+  <!-- Paso 1: turno -->
+  <section id="paso1" class="card" hidden>
+    <h2>¿En qué turno trabajas?</h2>
+    <div class="turnos" id="turnos"></div>
+  </section>
+
+  <!-- Paso 2: papeleta -->
+  <section id="paso2" style="display:grid;gap:12px" hidden>
+    <div class="row" style="justify-content:space-between">
+      <h2>Marca un candidato</h2>
+      <button id="volver" type="button">Cambiar turno</button>
+    </div>
+    <div id="lista" class="list" role="radiogroup" aria-label="Candidatos"></div>
+  </section>
+
+  <!-- Paso 3: listo -->
+  <div id="paso3" class="notice ok" hidden>
+    <strong>Tu voto fue registrado.</strong>
+    Gracias por participar. Desde este dispositivo ya no se puede volver a votar.
+  </div>
+</div>
+
+<div class="bar" id="barra" hidden>
+  <div class="bar-in">
+    <div class="sel" id="sel">Ningún candidato seleccionado</div>
+    <button id="cambiar" type="button" hidden>Cambiar</button>
+    <button id="votar" class="primary" type="button" disabled>Emitir voto</button>
+  </div>
+</div>
+
+<script>
+const BLANCO="__blanco";
+const $=id=>document.getElementById(id);
+let datos=null, turno=null, sel=null, confirmando=false;
+
+function error(t){const m=$("msg");m.textContent=t||"";m.hidden=!t}
+const etiqueta=v=>v===BLANCO?"Voto en blanco":v;
+function mostrar(paso){
+  ["paso1","paso2","paso3"].forEach(p=>$(p).hidden=p!==paso);
+  $("barra").hidden=paso!=="paso2";
+}
+
+function pintarBarra(){
+  $("votar").disabled=!sel;
+  $("votar").textContent=confirmando?"Confirmar voto":"Emitir voto";
+  $("cambiar").hidden=!confirmando;
+  const s=$("sel");s.textContent="";
+  if(!sel){s.textContent="Ningún candidato seleccionado";return}
+  s.append(confirmando?"¿Confirmas tu voto por ":"Seleccionado: ");
+  const b=document.createElement("b");b.textContent=etiqueta(sel);s.append(b,confirmando?"?":"");
+}
+
+function elegirTurno(t){
+  turno=t;sel=null;confirmando=false;error("");
+  const d=datos.turnos[t];
+  $("titulo").textContent="Votación "+d.nombre;
+  const lista=$("lista");lista.textContent="";
+  [...d.candidatos,BLANCO].forEach((n,i)=>{
+    const l=document.createElement("label");l.className="cand"+(n===BLANCO?" blank":"");
+    const r=document.createElement("input");r.type="radio";r.name="c";r.value=n;r.id="c"+i;
+    r.addEventListener("change",()=>{sel=n;confirmando=false;pintarBarra()});
+    const s=document.createElement("span");
+    if(n===BLANCO)s.textContent="Voto en blanco";
+    else{const [ap,no]=n.split(", ");const b=document.createElement("span");b.className="sur";b.textContent=ap;s.append(b,", "+no)}
+    l.append(r,s);lista.append(l);
+  });
+  mostrar("paso2");pintarBarra();window.scrollTo(0,0);
+}
+
+$("volver").addEventListener("click",()=>{turno=null;$("titulo").textContent="Elección de representante al Comité Paritario";mostrar("paso1")});
+$("cambiar").addEventListener("click",()=>{confirmando=false;pintarBarra()});
+$("votar").addEventListener("click",async()=>{
+  if(!sel||!turno)return;
+  if(!confirmando){confirmando=true;pintarBarra();return}
+  $("votar").disabled=true;error("");
+  try{
+    const r=await fetch("/api/votar",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({turno,opcion:sel})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){
+      if(r.status===409){mostrar("paso3");return}
+      throw new Error(d.error||"No se pudo registrar el voto. Inténtalo de nuevo.");
+    }
+    mostrar("paso3");
+  }catch(err){error(err.message);confirmando=false;pintarBarra()}
+});
+
+(async()=>{
+  try{
+    const r=await fetch("/api/papeleta");
+    datos=await r.json();
+    $("cargando").hidden=true;
+    if(datos.yaVoto){mostrar("paso3");return}
+    const cont=$("turnos");
+    Object.entries(datos.turnos).forEach(([t,d])=>{
+      const b=document.createElement("button");b.type="button";b.className="turno-btn";b.id="t"+t;
+      const big=document.createElement("b");big.textContent=d.nombre;
+      const sm=document.createElement("span");sm.textContent=d.candidatos.length+" candidatos";
+      b.append(big,sm);b.disabled=!d.abierta;
+      b.addEventListener("click",()=>elegirTurno(t));
+      cont.append(b);
+    });
+    mostrar("paso1");
+  }catch{ $("cargando").hidden=true;error("No se pudo cargar la votación. Revisa tu conexión y recarga la página.") }
+})();
+</script>
+</body>
+</html>
